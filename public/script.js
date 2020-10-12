@@ -1,8 +1,28 @@
 const initialText = document.getElementById("text");
-
 initialText.innerText = "Click anywhere to start";
-
 document.addEventListener("click", init);
+
+const canvasWaveform = document.getElementById("canvas-waveform");
+const waveCtx = canvasWaveform.getContext("2d");
+waveCtx.fillStyle = "#000";
+waveCtx.fillRect(0, 0, 150, 75);
+
+const canvasFrequency = document.getElementById("canvas-frequency");
+const freqCtx = canvasFrequency.getContext("2d");
+freqCtx.fillStyle = "#000";
+freqCtx.fillRect(0, 0, 150, 75);
+
+const waveWidth = canvasWaveform.width;
+const waveHeight = canvasWaveform.height;
+const freqWidth = canvasFrequency.width;
+const freqHeight = canvasFrequency.height;
+
+let isSpacePressed = false;
+
+let canvasBackgroundColor = "#000";
+let canvasLineColor = "#eeff05";
+
+const selectedWaveform = document.getElementById("option-waveform");
 
 function init() {
     document.removeEventListener("click", init);
@@ -24,26 +44,33 @@ function init() {
         { key: 72, note: "a", freq: 440 },
         { key: 85, note: "a#", freq: 466.16 },
         { key: 74, note: "b", freq: 493.88 },
-        { key: 75, note: "c", freq: 523.25 },
+        // { key: 75, note: "c", freq: 523.25 },
     ];
     const oscArray = [];
     for (let n = 0; n < 13; n++) {
         oscArray.push(null);
     }
     const gainNode = audioCtx.createGain();
-    console.log(gainNode);
-    gainNode.connect(audioCtx.destination);
+    const analyser = audioCtx.createAnalyser();
+    gainNode.connect(analyser);
+    analyser.connect(audioCtx.destination);
 
     document.addEventListener("keydown", (e) => {
-        console.log(e.keyCode);
+        // console.log(e.keyCode);
         for (let [index, item] of keysArray.entries()) {
             if (item.key === e.keyCode) {
                 keyboard.children[index].classList.add("pressed");
                 if (oscArray[index] === null) {
-                    oscArray[index] = playTone(index, item.freq);
+                    let currentWaveForm = selectedWaveform.options[selectedWaveform.selectedIndex].value;
+                    oscArray[index] = playTone(index, item.freq, currentWaveForm);
+                    modifyGain(gainNode);
                     // console.log(oscArray);
                 }
             }
+        }
+
+        if (e.keyCode === 32) {
+            isSpacePressed = true;
         }
     });
 
@@ -54,33 +81,99 @@ function init() {
                 if (oscArray[index] !== null) {
                     oscArray[index].stop();
                     oscArray[index] = null;
+                    modifyGain(gainNode);
                 }
             }
         }
+
+        if (e.keyCode === 32) {
+            isSpacePressed = false;
+        }
     });
 
-    function playTone(index, freq) {
-        let osc = audioCtx.createOscillator({
-            type: "sine",
-        });
+    function playTone(index, freq, wave) {
+        let osc = audioCtx.createOscillator();
+        osc.type = wave;
         osc.frequency.value = freq;
         osc.connect(gainNode);
-        modifyGain(gainNode);
         osc.start();
         return osc;
     }
 
     function modifyGain(gainNode) {
         //modify gain depending on how many notes are playing;
-        let oscCount = 1;
+        let oscCount = 0;
         for (let osc of oscArray) {
             if (osc) {
                 oscCount++;
-                // console.log(osc);
             }
         }
         let val = Number((1 / oscCount).toFixed(2));
-        gainNode.gain.value = val;
-        // console.log(`oscillators playing: ${oscCount}, gain set to: ${val}`);
+        if (val != Infinity) {
+            gainNode.gain.value = val;
+        }
     }
+
+    //visualizing stuff
+    analyser.fftSize = 2048;
+    const waveBuffer = analyser.fftSize;
+    const freqBuffer = analyser.frequencyBinCount;
+    const waveData = new Uint8Array(waveBuffer);
+    const freqData = new Uint8Array(freqBuffer);
+
+    function draw() {
+        requestAnimationFrame(draw);
+
+        //draw a wave
+        waveCtx.fillStyle = canvasBackgroundColor;
+        waveCtx.fillRect(0, 0, freqWidth, freqHeight);
+
+        analyser.getByteTimeDomainData(waveData);
+
+        //debug
+        if (isSpacePressed) {
+            console.log(waveData);
+        }
+
+        waveCtx.lineWidth = 2;
+        waveCtx.strokeStyle = canvasLineColor;
+
+        const sliceWidth = (waveWidth * 1.0) / waveBuffer;
+        let waveX = 0;
+
+        waveCtx.beginPath();
+        for (var i = 0; i < waveBuffer; i++) {
+            const v = waveData[i] / 128.0;
+            const y = (v * waveHeight) / 2;
+
+            if (i === 0) waveCtx.moveTo(waveX, y);
+            else waveCtx.lineTo(waveX, y);
+
+            waveX += sliceWidth;
+        }
+
+        waveCtx.lineTo(waveWidth, waveHeight / 2);
+        waveCtx.stroke();
+
+        //draw frequency graph
+        analyser.getByteFrequencyData(freqData);
+
+        freqCtx.fillStyle = canvasBackgroundColor;
+        freqCtx.fillRect(0, 0, freqWidth, freqHeight);
+
+        const barWidth = (freqWidth / freqBuffer) * 2.5;
+        let barHeight;
+        let freqX = 0;
+
+        for (let i = 0; i < freqBuffer; i++) {
+            barHeight = freqData[i];
+
+            freqCtx.fillStyle = canvasLineColor;
+            freqCtx.fillRect(freqX, freqHeight - barHeight / 4, barWidth, barHeight / 2);
+
+            freqX += barWidth + 1;
+        }
+    }
+
+    draw();
 }
